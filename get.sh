@@ -17,7 +17,7 @@ function getListing() {
     local FOLDERS=$(echo $LIST | jq -r -c '.folders | .[]')
 
     for FOLDER in $FOLDERS; do
-        mkdir $DATADIR/$SITEDIR/$(echo $1 | sed 's/.*rest\/services//') || true
+        mkdir -p $DATADIR/${SITEDIR}$(echo $1 | sed 's/.*rest\/services//')/$FOLDER &>/dev/null || true
         getListing "$BASE/$FOLDER"
     done
 
@@ -38,12 +38,24 @@ function getListing() {
 
 function getMapServer() {
     echo "# Listing Services ($1)"
-    local LAYERS=$(curl -s "$1?f=pjson" | jq -r -c '.layers | .[]')
-    for LAYER in $LAYERS; do
-        echo "# Dumping Layer ($1/$(echo $LAYER | jq -r -c '.id'))"
-        esri-dump "$1/$(echo $LAYER | jq -r -c '.id')"
-    done
-    exit 1
+    mkdir -p $DATADIR/${SITEDIR}$(echo $1 | sed 's/.*rest\/services//') &>/dev/null || true
+    curl -s "$1?f=pjson" \
+        |  jq -r -c '.layers | .[]' \
+        | while read LAYER; do
+            echo "# Dumping Layer $(echo $LAYER | jq -r -c '.name')  ($1/$(echo $LAYER | jq -r -c '.id'))"
+            local LAYERTYPE=$(curl -s "$1/$(echo $LAYER | jq -r -c '.id')?f=pjson" | jq -r -c '.geometryType')
+            if [[ $LAYERTYPE == esri* ]]; then
+                local OUTFILE="$DATADIR/${SITEDIR}$(echo $1 | sed 's/.*rest\/services//')/$(_filesafe "$(echo $LAYER | jq -r -c '.name')").geojson"
+                if [[ ! -e $OUTFILE ]]; then
+                    esri-dump "$1/$(echo $LAYER | jq -r -c '.id')" > $OUTFILE || true
+                    echo "#    Done!"
+                else
+                    echo "# Exists!"
+                fi
+            else
+                echo "#    $LAYERTYPE not supported"
+            fi
+        done
 }
 
 
@@ -56,8 +68,13 @@ fi
 
 BASE=$(echo "$1" | grep -o ".*\/rest\/services")
 DATADIR=$(echo $(dirname $0)/data)
-SITEDIR=$(_filesafe $(echo $BASE | grep -Po "[A-Z|a-z]+?\.[a-z]{2,3}\/" | sed 's/\..*//'))
-
+if [[ -z $(echo $BASE | grep -Po "[A-Z|a-z]+?\.[a-z]{2,3}\/") ]]; then
+    #IP Address
+    SITEDIR=$(_filesafe $(echo $BASE | grep -Po "[0-9|\.]+"))
+else
+    #Domain Name
+    SITEDIR=$(_filesafe $(echo $BASE | grep -Po "[A-Z|a-z]+?\.[a-z]{2,3}\/" | sed 's/\..*//'))
+fi
 echo "# creating site directory"
-mkdir -p $DATADIR/$SITEDIR || true
+mkdir -p $DATADIR/$SITEDIR &>/dev/null || true
 getListing $BASE
